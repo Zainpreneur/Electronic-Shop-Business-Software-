@@ -1,0 +1,179 @@
+// Electronic Shop Business Software — Prisma schema
+// Dev DB is SQLite (file-based, zero setup). For production, switch the
+// datasource provider to "postgresql" and point DATABASE_URL at a real DB —
+// the models below are already compatible with Postgres.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// NOTE: SQLite (the dev datasource below) has no native enum type, so the
+// "enum-like" fields below are plain Strings whose allowed values are
+// validated by Zod at the API layer instead of by the DB. On Postgres,
+// these could be promoted to real `enum` types.
+//
+// Role:           ADMIN | MANAGER | STAFF
+// PaymentMethod:  CASH | CARD | MOBILE_MONEY | BANK_TRANSFER | OTHER
+// SaleStatus:     COMPLETED | REFUNDED | PARTIALLY_REFUNDED | CANCELLED
+// PurchaseStatus: ORDERED | RECEIVED | CANCELLED
+// RepairStatus:   RECEIVED | DIAGNOSING | IN_PROGRESS | WAITING_FOR_PARTS | COMPLETED | DELIVERED | CANCELLED
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("STAFF")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales       Sale[]
+  purchases   Purchase[]
+  repairJobs  RepairJob[] @relation("Technician")
+  stockMoves  StockMovement[]
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+}
+
+model Supplier {
+  id        String     @id @default(cuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  createdAt DateTime   @default(now())
+  purchases Purchase[]
+}
+
+model Customer {
+  id        String      @id @default(cuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  createdAt DateTime    @default(now())
+  sales     Sale[]
+  repairs   RepairJob[]
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  sku           String   @unique
+  name          String
+  brand         String?
+  description   String?
+  categoryId    String?
+  category      Category? @relation(fields: [categoryId], references: [id])
+  costPrice     Float    @default(0)
+  sellingPrice  Float    @default(0)
+  stockQty      Int      @default(0)
+  reorderLevel  Int      @default(5)
+  imageUrl      String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  saleItems     SaleItem[]
+  purchaseItems PurchaseItem[]
+  stockMoves    StockMovement[]
+}
+
+// Immutable audit trail of every stock change (sale, purchase, adjustment).
+model StockMovement {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  change    Int // positive = stock in, negative = stock out
+  reason    String // e.g. "SALE", "PURCHASE", "ADJUSTMENT", "REPAIR_PART"
+  refId     String? // id of the related Sale / Purchase / etc.
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Sale {
+  id            String        @id @default(cuid())
+  invoiceNo     String        @unique
+  customerId    String?
+  customer      Customer?     @relation(fields: [customerId], references: [id])
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  items         SaleItem[]
+  subtotal      Float
+  discount      Float         @default(0)
+  tax           Float         @default(0)
+  total         Float
+  paymentMethod String        @default("CASH")
+  status        String        @default("COMPLETED")
+  notes         String?
+  createdAt     DateTime      @default(now())
+}
+
+model SaleItem {
+  id         String  @id @default(cuid())
+  saleId     String
+  sale       Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product @relation(fields: [productId], references: [id])
+  qty        Int
+  unitPrice  Float
+  lineTotal  Float
+}
+
+model Purchase {
+  id           String         @id @default(cuid())
+  refNo        String         @unique
+  supplierId   String
+  supplier     Supplier       @relation(fields: [supplierId], references: [id])
+  userId       String
+  user         User           @relation(fields: [userId], references: [id])
+  items        PurchaseItem[]
+  total        Float
+  status       String         @default("ORDERED")
+  createdAt    DateTime       @default(now())
+  receivedAt   DateTime?
+}
+
+model PurchaseItem {
+  id         String   @id @default(cuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  qty        Int
+  unitCost   Float
+  lineTotal  Float
+}
+
+model RepairJob {
+  id               String       @id @default(cuid())
+  jobNo            String       @unique
+  customerId       String
+  customer         Customer     @relation(fields: [customerId], references: [id])
+  deviceType       String // e.g. Smartphone, Laptop, TV
+  brand            String?
+  model            String?
+  serialNumber     String?
+  issueDescription String
+  diagnosis        String?
+  status           String       @default("RECEIVED")
+  estimateCost     Float?
+  finalCost        Float?
+  technicianId     String?
+  technician       User?        @relation("Technician", fields: [technicianId], references: [id])
+  receivedAt       DateTime     @default(now())
+  completedAt      DateTime?
+  deliveredAt      DateTime?
+  notes            String?
+}
